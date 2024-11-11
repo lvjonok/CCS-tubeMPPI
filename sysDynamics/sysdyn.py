@@ -47,11 +47,19 @@ def integratorDyn(xk, uk):
     return f
 
 
-def CarDyn(xk, uk, paramdict):
-    raise NotImplementedError
+def CarDyn(xk, a=1.0, delta=0.1, L=0.5):
 
-    return
+    assert xk.shape[1] == 1 and xk.shape[0] == 4
 
+    x, y, xdot, ydot = xk.flatten()  # [x, y, xdot, ydot]
+    v = np.sqrt(xdot ** 2 + ydot ** 2) # # Calculate forward velocity magnitude
+
+    if v == 0:
+        dtheta = 0
+    else:
+        dtheta = v * np.tan(delta) / L
+
+    return np.array([[xdot], [ydot], [dtheta], [a]])
 
 if __name__ == "__main__":
     pass
