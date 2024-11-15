@@ -23,6 +23,19 @@ def plot_circle(X, R=2.0, h=0.125, help_points=[], X2=[]):
 
     px, py = X[0, :], X[1, :]
     ax.plot(px, py, linewidth=1, color="r", marker=" ")
+    # draw arrows with theta
+    for ii in range(len(px)):
+        ax.arrow(
+            px[ii],
+            py[ii],
+            0.5 * np.cos(X[2, ii]),
+            0.5 * np.sin(X[2, ii]),
+            head_width=0.1,
+            head_length=0.1,
+            fc="k",
+            ec="k",
+            alpha=1 - ii / len(px),
+        )
 
     if help_points:
         # h1 = []

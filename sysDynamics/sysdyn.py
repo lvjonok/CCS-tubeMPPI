@@ -47,19 +47,44 @@ def integratorDyn(xk, uk):
     return f
 
 
-def CarDyn(xk, a=1.0, delta=0.1, L=0.5):
+def car_dynamics(xk, uk):
+    """
+    Car dynamics implementation (bicycle model)
 
-    assert xk.shape[1] == 1 and xk.shape[0] == 4
+    Inputs:
+        xk: Current state [x, y, theta, v]
+        uk: Control input [acceleration, steering_angle]
+        paramdict: Dictionary containing parameters like wheelbase length
 
-    x, y, xdot, ydot = xk.flatten()  # [x, y, xdot, ydot]
-    v = np.sqrt(xdot ** 2 + ydot ** 2) # # Calculate forward velocity magnitude
+    Returns:
+        f: State derivatives [dx/dt, dy/dt, dtheta/dt, dv/dt]
+    """
+    paramdict = {}
 
-    if v == 0:
-        dtheta = 0
-    else:
-        dtheta = v * np.tan(delta) / L
+    # Extract states
+    x, y, theta, v = xk[0, 0], xk[1, 0], xk[2, 0], xk[3, 0]
 
-    return np.array([[xdot], [ydot], [dtheta], [a]])
+    # Extract controls
+    a = uk[0, 0]  # acceleration
+    delta = uk[1, 0]  # steering angle
+
+    # clip the controls
+    a = np.clip(a, -0.1, 0.4)
+    delta = np.clip(delta, -0.5, 0.5)
+
+    # Get parameters
+    L = paramdict.get("wheelbase", 0.1)  # Default wheelbase length 0.1m
+
+    # Compute derivatives
+    dx = v * np.cos(theta)
+    dy = v * np.sin(theta)
+    dtheta = (v / L) * np.tan(delta)
+    dv = a
+
+    # Return state derivatives
+    f = np.array([[dx], [dy], [dtheta], [dv]])
+    return f
+
 
 if __name__ == "__main__":
     pass

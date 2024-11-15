@@ -5,7 +5,7 @@ from costFunctions.costfun import LinBaselineCost, LinBaselineSoftCost
 from costFunctions.costfun import QuadHardCost, QuadSoftCost, QuadSoftCost2
 from costFunctions.costfun import QuadObsCost, QuadPosCost
 
-from sysDynamics.sysdyn import integratorDyn
+from sysDynamics.sysdyn import integratorDyn, car_dynamics
 from sysDynamics.sysdyn import rk4
 
 from controllers.MPPI import MPPI, MPPI_thread, MPPI_pathos
@@ -103,7 +103,7 @@ def main():
     parser.add_argument(
         "-cost",
         type=str,
-        default="sep",
+        default="hard",
         choices=["sep", "hard", "soft", "soft2"],
         help="Cost Type. Default:sep, " + "options: sep, hard, soft, soft2",
     )
@@ -171,7 +171,7 @@ def main():
     Sigmainv = np.linalg.inv(Sigma)
     Ubar = np.ones((2, T))
 
-    F = lambda x, u: integratorDyn(x, u)
+    F = lambda x, u: car_dynamics(x, u)
 
     obs_list = np.load(OBS_FILE, allow_pickle=True)
 
@@ -248,6 +248,8 @@ def main():
 
         uk = U[:, 0:1]
         xkp1 = xk + F(xk, uk + eps) * dt + wk
+        # normalize theta
+        # xkp1[2] = (xkp1[2] + np.pi) % (2 * np.pi) - np.pi
 
         Xreal.append(xkp1)
         Ureal.append(uk)
