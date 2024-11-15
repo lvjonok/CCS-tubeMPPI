@@ -14,14 +14,32 @@ import matplotlib.pyplot as plt
 import sys
 import pathlib
 sys.path.append(str(pathlib.Path(__file__).parent.parent.parent))
-
+import math
 import cubic_spline_planner
+
+import io
+from PIL import Image
 
 k = 0.5  # control gain
 Kp = 1.0  # speed proportional gain
 dt = 0.1  # [s] time difference
 L = 2.9  # [m] Wheel base of vehicle
 max_steer = np.radians(30.0)  # [rad] max steering angle
+
+# Vehicle parameters
+LENGTH = 4.5  # [m]
+WIDTH = 2.0  # [m]
+BACKTOWHEEL = 1.0  # [m]
+WHEEL_LEN = 0.3  # [m]
+WHEEL_WIDTH = 0.2  # [m]
+TREAD = 0.7  # [m]
+WB = 2.5  # [m]
+
+MAX_STEER = np.deg2rad(45.0)  # maximum steering angle [rad]
+MAX_DSTEER = np.deg2rad(30.0)  # maximum steering speed [rad/s]
+MAX_SPEED = 55.0 / 3.6  # maximum speed [m/s]
+MIN_SPEED = -20.0 / 3.6  # minimum speed [m/s]
+MAX_ACCEL = 1.0  # maximum accel [m/ss]
 
 show_animation = True
 
@@ -194,6 +212,61 @@ def calc_target_index(state, cx, cy):
 
     return target_idx, error_front_axle
 
+def plot_car(x, y, yaw, steer=0.0, cabcolor="-r", truckcolor="-k"):  # pragma: no cover
+
+    outline = np.array([[-BACKTOWHEEL, (LENGTH - BACKTOWHEEL), (LENGTH - BACKTOWHEEL), -BACKTOWHEEL, -BACKTOWHEEL],
+                        [WIDTH / 2, WIDTH / 2, - WIDTH / 2, -WIDTH / 2, WIDTH / 2]])
+
+    fr_wheel = np.array([[WHEEL_LEN, -WHEEL_LEN, -WHEEL_LEN, WHEEL_LEN, WHEEL_LEN],
+                         [-WHEEL_WIDTH - TREAD, -WHEEL_WIDTH - TREAD, WHEEL_WIDTH - TREAD, WHEEL_WIDTH - TREAD, -WHEEL_WIDTH - TREAD]])
+
+    rr_wheel = np.copy(fr_wheel)
+
+    fl_wheel = np.copy(fr_wheel)
+    fl_wheel[1, :] *= -1
+    rl_wheel = np.copy(rr_wheel)
+    rl_wheel[1, :] *= -1
+
+    Rot1 = np.array([[math.cos(yaw), math.sin(yaw)],
+                     [-math.sin(yaw), math.cos(yaw)]])
+    Rot2 = np.array([[math.cos(steer), math.sin(steer)],
+                     [-math.sin(steer), math.cos(steer)]])
+
+    fr_wheel = (fr_wheel.T.dot(Rot2)).T
+    fl_wheel = (fl_wheel.T.dot(Rot2)).T
+    fr_wheel[0, :] += WB
+    fl_wheel[0, :] += WB
+
+    fr_wheel = (fr_wheel.T.dot(Rot1)).T
+    fl_wheel = (fl_wheel.T.dot(Rot1)).T
+
+    outline = (outline.T.dot(Rot1)).T
+    rr_wheel = (rr_wheel.T.dot(Rot1)).T
+    rl_wheel = (rl_wheel.T.dot(Rot1)).T
+
+    outline[0, :] += x
+    outline[1, :] += y
+    fr_wheel[0, :] += x
+    fr_wheel[1, :] += y
+    rr_wheel[0, :] += x
+    rr_wheel[1, :] += y
+    fl_wheel[0, :] += x
+    fl_wheel[1, :] += y
+    rl_wheel[0, :] += x
+    rl_wheel[1, :] += y
+
+    plt.plot(np.array(outline[0, :]).flatten(),
+             np.array(outline[1, :]).flatten(), truckcolor)
+    plt.plot(np.array(fr_wheel[0, :]).flatten(),
+             np.array(fr_wheel[1, :]).flatten(), truckcolor)
+    plt.plot(np.array(rr_wheel[0, :]).flatten(),
+             np.array(rr_wheel[1, :]).flatten(), truckcolor)
+    plt.plot(np.array(fl_wheel[0, :]).flatten(),
+             np.array(fl_wheel[1, :]).flatten(), truckcolor)
+    plt.plot(np.array(rl_wheel[0, :]).flatten(),
+             np.array(rl_wheel[1, :]).flatten(), truckcolor)
+    plt.plot(x, y, "*")
+
 
 def main():
     """Plot an example of Stanley steering control on a cubic spline."""
@@ -219,7 +292,8 @@ def main():
     v = [state.v]
     t = [0.0]
     target_idx, _ = calc_target_index(state, cx, cy)
-
+    frames = [] if show_animation else None
+    plt.figure(figsize=(12, 8))
     while max_simulation_time >= time and last_idx > target_idx:
         ai = pid_control(target_speed, state.v)
         di, target_idx = stanley_control(state, cx, cy, cyaw, target_idx)
@@ -240,11 +314,18 @@ def main():
                     lambda event: [exit(0) if event.key == 'escape' else None])
             plt.plot(cx, cy, ".r", label="course")
             plt.plot(x, y, "-b", label="trajectory")
-            plt.plot(cx[target_idx], cy[target_idx], "xg", label="target")
+            plt.plot(cx[target_idx], cy[target_idx], "og", label="target")
+            plot_car(state.x, state.y, state.yaw, steer=di)
             plt.axis("equal")
             plt.grid(True)
             plt.title("Speed[km/h]:" + str(state.v * 3.6)[:4])
-            plt.pause(0.001)
+            plt.pause(0.1)
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            frames.append(Image.open(buf))
+    
+    frames[0].save("stanley_control.gif", save_all=True, append_images=frames[1:], duration=200, loop=0)
 
     # Test
     assert last_idx >= target_idx, "Cannot reach goal"
