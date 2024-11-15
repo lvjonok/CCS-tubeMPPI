@@ -12,7 +12,7 @@ from controllers.MPPI import MPPI, MPPI_thread, MPPI_pathos
 from controllers.LinCovSteer import linCovSteer
 from controllers.LQG import LQG
 
-from Plotting.plotdata import plot_circle
+from Plotting.plotdata import plot_circle, animate_circle
 from Plotting.plotdata import plot_quad
 
 from matplotlib import pyplot as plt
@@ -235,6 +235,8 @@ def main():
 
     # figtraj, axtraj = plot_quad(X, obs_list, DES_POS)
     figtraj, axtraj = plot_circle(X)
+
+    anim = animate_circle(X, interval=50, save_path="reg_mppi.gif")
 
     fig2, ax2 = plt.subplots()
     ax2.plot(Vvst)
