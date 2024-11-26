@@ -178,7 +178,6 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
-
     FILENAME = args.filename
     QUAD = args.quad
     FILENAME_DATA = FILENAME + "/X.npy"
