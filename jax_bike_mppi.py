@@ -3,6 +3,7 @@ import numpy as np
 import jax.numpy as jnp
 from abc import ABC, abstractmethod
 from tqdm import tqdm
+from track2obstacles import ConvexHull, smooth_track, generate_boundaries
 
 
 # define dynamics of bicycle model
@@ -92,14 +93,39 @@ class MPPI(Controller):
         size = (self.cfg["n_samples"], self.cfg["horizon"], self.act_dim)
         return self.rng.normal(size=size) * self.cfg["noise_sigma"]
 
-    def _compute_cost(self, state_sequences, action_sequences, target):
+    def _compute_cost(self, state_sequences, action_sequences):
         # state_sequences: N x H x 4
         # action_sequences: N x H x 2
         # target: 2
+        cost = 0
+
+        current_target_idx = self.cfg["waypoint_idx"]
+        closest_target = self.cfg["waypoints"][current_target_idx]
 
         # cost is how close we are to the target during the trajectory
-        distances = jnp.linalg.norm(state_sequences[:, :, :2] - target, axis=-1)
-        cost = jnp.sum(distances, axis=1)
+        distances = jnp.linalg.norm(state_sequences[:, :, :2] - closest_target, axis=-1)
+        reached = distances < self.cfg["accept_waypoint_dist"]
+        # discount cost if we reached the target
+        discounted = jnp.where(reached, 0.0, distances)
+        cost += jnp.sum(discounted, axis=1)
+
+        # cost += jnp.sum(distances, axis=1)
+
+        # we want to have direction aligned with the target, more important at the end
+        angles = jnp.arctan2(
+            closest_target[1] - state_sequences[:, :, 1],
+            closest_target[0] - state_sequences[:, :, 0],
+        )
+        angle_weights = jnp.geomspace(0.1, 1.0, state_sequences.shape[1])
+        angle_cost = jnp.sum(
+            angle_weights * jnp.abs(angles - state_sequences[:, :, 2]), axis=1
+        )
+        cost += angle_cost
+
+        # we want to keep average speed positive and close to 3.0
+        speed = jnp.mean(state_sequences[:, :, 3], axis=1)
+        speed_cost = (speed - self.cfg["target_velocity"]) ** 2
+        cost += speed_cost
 
         return cost
 
@@ -109,9 +135,7 @@ class MPPI(Controller):
 
         trajectories = self.rollout_fn(obs, acts)
 
-        target = self.cfg["current_waypoint"]
-        # cost is how close we are to the target during the trajectory
-        costs = self._compute_cost(trajectories, acts, target)
+        costs = self._compute_cost(trajectories, acts)
 
         exp_costs = np.exp(self.cfg["temperature"] * (np.min(costs) - costs))
         denom = np.sum(exp_costs) + 1e-10
@@ -127,37 +151,65 @@ class MPPI(Controller):
 if __name__ == "__main__":
     # test MPPI controller
     config = {
-        "horizon": 120,
-        "n_samples": 2048,
-        "noise_sigma": 1.5,
+        "horizon": 200,
+        "n_samples": 512,
+        "noise_sigma": 2.0,
         "temperature": 1.0,
         "act_dim": 2,
-        "act_max": np.array([1.2, 1.0]),
-        "act_min": np.array([-1.2, -1.0]),
+        "act_max": np.array([1.4, 2.0]),
+        "act_min": np.array([-1.4, -2.0]),
         "seed": 0,
         # simulation related
-        "N_SIMULATION": 1000,
+        "N_SIMULATION": 4000,
         # waypoints related
-        "accept_waypoint_dist": 0.1,  # distance to waypoint to accept it
-        "current_waypoint": None,
+        # distance to waypoint to accept it
+        "accept_waypoint_dist": 0.3,
+        "target_velocity": 4.0,
+        "waypoints": None,
+        "waypoint_idx": 0,
     }
 
-    # define a set of waypoints
-    waypoints = jnp.array(
+    # create random racing track
+    TRACK_WIDTH = 0.60
+    points = jnp.array(
         [
-            [0.0, 0.0],
-            [2.0, 0.0],
-            [2.0, 2.0],
-            [0.0, 2.0],
+            [1.0, 1.0],
+            [2.0, 1.0],
+            [3.0, 2.0],
+            [4.0, 2.0],
+            [5.0, 3.0],
+            [6.0, 3.0],
+            [7.0, 4.0],
+            [6.0, 5.0],
+            [5.0, 5.0],
+            [4.0, 6.0],
+            [3.0, 6.0],
+            [2.0, 5.0],
+            [1.0, 5.0],
+            [1.0, 4.0],
         ]
     )
-    waypoint_idx = 0
-    config["current_waypoint"] = waypoints[waypoint_idx]
+
+    # Step 2: Compute the convex hull
+    hull = ConvexHull(points)
+    hull_points = points[hull.vertices]
+
+    # Step 3: Smooth the track
+    smooth_points = smooth_track(hull_points)
+    # want to take each N point
+    smooth_points = smooth_points[::15]
+    # update config
+
+    # define a set of waypoints
+    waypoints = smooth_points
+    config["waypoints"] = smooth_points
 
     mppi = MPPI(config)
-    state = np.array([0.0, 0.0, 0.0, 0.0])
+    # find direction from first to second waypoint
+    dir0 = waypoints[1] - waypoints[0]
+    theta0 = jnp.arctan2(dir0[1], dir0[0])
+    state = np.array([*smooth_points[0], theta0, 0.0])
     states_history = jnp.array([state])
-    target = jnp.array([10.0, 10.0])
 
     for _ in tqdm(range(config["N_SIMULATION"]), desc="Simulating"):
         action = mppi.get_action(state)
@@ -165,15 +217,19 @@ if __name__ == "__main__":
         states_history = jnp.vstack([states_history, state])
 
         # check if we reached the waypoint
+        waypoint_idx = mppi.cfg["waypoint_idx"]
+        current_waypoint = mppi.cfg["waypoints"][waypoint_idx]
         if (
-            jnp.linalg.norm(state[:2] - config["current_waypoint"])
+            jnp.linalg.norm(state[:2] - current_waypoint)
             < config["accept_waypoint_dist"]
         ):
             waypoint_idx += 1
             if waypoint_idx >= waypoints.shape[0]:
                 waypoint_idx = 0
-            config["current_waypoint"] = waypoints[waypoint_idx]
-            print(f"Reached waypoint {waypoint_idx}")
+            print(
+                f"Reached waypoint {waypoint_idx} next one is {waypoints[waypoint_idx]}"
+            )
+            mppi.cfg["waypoint_idx"] = waypoint_idx
 
     import matplotlib.pyplot as plt
 
@@ -189,6 +245,13 @@ if __name__ == "__main__":
         width=0.003,
         color="r",
         label="Direction",
+    )
+    plt.scatter(
+        smooth_points[:, 0],
+        smooth_points[:, 1],
+        color="orange",
+        label="Central Line",
+        zorder=5,
     )
     plt.xlabel("X position")
     plt.ylabel("Y position")
