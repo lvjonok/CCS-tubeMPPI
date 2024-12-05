@@ -1,6 +1,5 @@
 # MPPI python file
 import numpy as np
-from pdb import set_trace
 from tqdm import tqdm
 
 from queue import Queue
@@ -8,8 +7,6 @@ import queue
 import threading
 
 from pathos import multiprocessing as mp
-from pathos.pools import ParallelPool
-import pathos
 
 from sysDynamics.sysdyn import rk4
 

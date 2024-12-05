@@ -265,12 +265,17 @@ def main():
         plt.title("Speed[km/h]:" + str(ego.vel * 3.6)[:4])
         plt.pause(0.1)
 
-        
         buf = io.BytesIO()
-        plt.savefig(buf, format='png')
+        plt.savefig(buf, format="png")
         buf.seek(0)
         frames.append(Image.open(buf))
-    frames[0].save("pure_pursuit.gif", save_all=True, append_images=frames[1:], duration=200, loop=0)
+    frames[0].save(
+        "pure_pursuit.gif",
+        save_all=True,
+        append_images=frames[1:],
+        duration=200,
+        loop=0,
+    )
 
 
 if __name__ == "__main__":

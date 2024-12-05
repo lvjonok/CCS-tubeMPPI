@@ -1,23 +1,18 @@
 # CSMPPI 2d quadrotor test script
 
 import numpy as np
-from costFunctions.costfun import LinBaselineCost, LinBaselineSoftCost
 from costFunctions.costfun import QuadHardCost, QuadSoftCost, QuadSoftCost2
 from costFunctions.costfun import QuadObsCost, QuadPosCost
 
-from sysDynamics.sysdyn import integratorDyn, car_dynamics
-from sysDynamics.sysdyn import rk4
+from sysDynamics.sysdyn import car_dynamics
 
-from controllers.MPPI import MPPI, MPPI_thread, MPPI_pathos
+from controllers.MPPI import MPPI_pathos
 from controllers.LinCovSteer import linCovSteer, getObsConstr
-from controllers.LQG import LQG
 
-from Plotting.plotdata import plot_circle
 from Plotting.plotdata import plot_quad
 
 from matplotlib import pyplot as plt
 
-from pdb import set_trace
 from tqdm import tqdm
 import argparse
 import os
@@ -165,7 +160,7 @@ def main():
             elif "Cost Type" in line:
                 COST_TYPE = line.split(":")[1].replace(" ", "").replace("\n", "")
 
-    x0 = np.array([[0.0], [0.0], [0.0], [0.0]])
+    x0 = np.array([[0.0], [0.0], [0.0], [0.0], [0.0]])
 
     Sigma = mu * np.eye(2)
     Sigmainv = np.linalg.inv(Sigma)

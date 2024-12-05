@@ -7,7 +7,6 @@ import matplotlib as mpl
 import matplotlib.patches as mpatches
 # from matplotlib.collections import PatchCollection
 
-import pdb
 import argparse
 
 

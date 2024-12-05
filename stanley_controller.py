@@ -9,10 +9,12 @@ Ref:
     - [Autonomous Automobile Path Tracking](https://www.ri.cmu.edu/pub_files/2009/2/Automatic_Steering_Methods_for_Autonomous_Automobile_Path_Tracking.pdf)
 
 """
+
 import numpy as np
 import matplotlib.pyplot as plt
 import sys
 import pathlib
+
 sys.path.append(str(pathlib.Path(__file__).parent.parent.parent))
 import math
 import cubic_spline_planner
@@ -102,6 +104,7 @@ def angle_mod(x, zero_2_2pi=False, degree=False):
         return mod_angle.item()
     else:
         return mod_angle
+
 
 class State:
     """
@@ -206,19 +209,38 @@ def calc_target_index(state, cx, cy):
     target_idx = np.argmin(d)
 
     # Project RMS error onto front axle vector
-    front_axle_vec = [-np.cos(state.yaw + np.pi / 2),
-                      -np.sin(state.yaw + np.pi / 2)]
+    front_axle_vec = [-np.cos(state.yaw + np.pi / 2), -np.sin(state.yaw + np.pi / 2)]
     error_front_axle = np.dot([dx[target_idx], dy[target_idx]], front_axle_vec)
 
     return target_idx, error_front_axle
 
+
 def plot_car(x, y, yaw, steer=0.0, cabcolor="-r", truckcolor="-k"):  # pragma: no cover
+    outline = np.array(
+        [
+            [
+                -BACKTOWHEEL,
+                (LENGTH - BACKTOWHEEL),
+                (LENGTH - BACKTOWHEEL),
+                -BACKTOWHEEL,
+                -BACKTOWHEEL,
+            ],
+            [WIDTH / 2, WIDTH / 2, -WIDTH / 2, -WIDTH / 2, WIDTH / 2],
+        ]
+    )
 
-    outline = np.array([[-BACKTOWHEEL, (LENGTH - BACKTOWHEEL), (LENGTH - BACKTOWHEEL), -BACKTOWHEEL, -BACKTOWHEEL],
-                        [WIDTH / 2, WIDTH / 2, - WIDTH / 2, -WIDTH / 2, WIDTH / 2]])
-
-    fr_wheel = np.array([[WHEEL_LEN, -WHEEL_LEN, -WHEEL_LEN, WHEEL_LEN, WHEEL_LEN],
-                         [-WHEEL_WIDTH - TREAD, -WHEEL_WIDTH - TREAD, WHEEL_WIDTH - TREAD, WHEEL_WIDTH - TREAD, -WHEEL_WIDTH - TREAD]])
+    fr_wheel = np.array(
+        [
+            [WHEEL_LEN, -WHEEL_LEN, -WHEEL_LEN, WHEEL_LEN, WHEEL_LEN],
+            [
+                -WHEEL_WIDTH - TREAD,
+                -WHEEL_WIDTH - TREAD,
+                WHEEL_WIDTH - TREAD,
+                WHEEL_WIDTH - TREAD,
+                -WHEEL_WIDTH - TREAD,
+            ],
+        ]
+    )
 
     rr_wheel = np.copy(fr_wheel)
 
@@ -227,10 +249,10 @@ def plot_car(x, y, yaw, steer=0.0, cabcolor="-r", truckcolor="-k"):  # pragma: n
     rl_wheel = np.copy(rr_wheel)
     rl_wheel[1, :] *= -1
 
-    Rot1 = np.array([[math.cos(yaw), math.sin(yaw)],
-                     [-math.sin(yaw), math.cos(yaw)]])
-    Rot2 = np.array([[math.cos(steer), math.sin(steer)],
-                     [-math.sin(steer), math.cos(steer)]])
+    Rot1 = np.array([[math.cos(yaw), math.sin(yaw)], [-math.sin(yaw), math.cos(yaw)]])
+    Rot2 = np.array(
+        [[math.cos(steer), math.sin(steer)], [-math.sin(steer), math.cos(steer)]]
+    )
 
     fr_wheel = (fr_wheel.T.dot(Rot2)).T
     fl_wheel = (fl_wheel.T.dot(Rot2)).T
@@ -255,16 +277,29 @@ def plot_car(x, y, yaw, steer=0.0, cabcolor="-r", truckcolor="-k"):  # pragma: n
     rl_wheel[0, :] += x
     rl_wheel[1, :] += y
 
-    plt.plot(np.array(outline[0, :]).flatten(),
-             np.array(outline[1, :]).flatten(), truckcolor)
-    plt.plot(np.array(fr_wheel[0, :]).flatten(),
-             np.array(fr_wheel[1, :]).flatten(), truckcolor)
-    plt.plot(np.array(rr_wheel[0, :]).flatten(),
-             np.array(rr_wheel[1, :]).flatten(), truckcolor)
-    plt.plot(np.array(fl_wheel[0, :]).flatten(),
-             np.array(fl_wheel[1, :]).flatten(), truckcolor)
-    plt.plot(np.array(rl_wheel[0, :]).flatten(),
-             np.array(rl_wheel[1, :]).flatten(), truckcolor)
+    plt.plot(
+        np.array(outline[0, :]).flatten(), np.array(outline[1, :]).flatten(), truckcolor
+    )
+    plt.plot(
+        np.array(fr_wheel[0, :]).flatten(),
+        np.array(fr_wheel[1, :]).flatten(),
+        truckcolor,
+    )
+    plt.plot(
+        np.array(rr_wheel[0, :]).flatten(),
+        np.array(rr_wheel[1, :]).flatten(),
+        truckcolor,
+    )
+    plt.plot(
+        np.array(fl_wheel[0, :]).flatten(),
+        np.array(fl_wheel[1, :]).flatten(),
+        truckcolor,
+    )
+    plt.plot(
+        np.array(rl_wheel[0, :]).flatten(),
+        np.array(rl_wheel[1, :]).flatten(),
+        truckcolor,
+    )
     plt.plot(x, y, "*")
 
 
@@ -274,8 +309,7 @@ def main():
     ax = [0.0, 100.0, 100.0, 50.0, 60.0]
     ay = [0.0, 0.0, -30.0, -20.0, 0.0]
 
-    cx, cy, cyaw, ck, s = cubic_spline_planner.calc_spline_course(
-        ax, ay, ds=0.1)
+    cx, cy, cyaw, ck, s = cubic_spline_planner.calc_spline_course(ax, ay, ds=0.1)
 
     target_speed = 30.0 / 3.6  # [m/s]
 
@@ -310,8 +344,10 @@ def main():
         if show_animation:  # pragma: no cover
             plt.cla()
             # for stopping simulation with the esc key.
-            plt.gcf().canvas.mpl_connect('key_release_event',
-                    lambda event: [exit(0) if event.key == 'escape' else None])
+            plt.gcf().canvas.mpl_connect(
+                "key_release_event",
+                lambda event: [exit(0) if event.key == "escape" else None],
+            )
             plt.plot(cx, cy, ".r", label="course")
             plt.plot(x, y, "-b", label="trajectory")
             plt.plot(cx[target_idx], cy[target_idx], "og", label="target")
@@ -321,11 +357,17 @@ def main():
             plt.title("Speed[km/h]:" + str(state.v * 3.6)[:4])
             plt.pause(0.1)
             buf = io.BytesIO()
-            plt.savefig(buf, format='png')
+            plt.savefig(buf, format="png")
             buf.seek(0)
             frames.append(Image.open(buf))
-    
-    frames[0].save("stanley_control.gif", save_all=True, append_images=frames[1:], duration=200, loop=0)
+
+    frames[0].save(
+        "stanley_control.gif",
+        save_all=True,
+        append_images=frames[1:],
+        duration=200,
+        loop=0,
+    )
 
     # Test
     assert last_idx >= target_idx, "Cannot reach goal"
@@ -347,5 +389,5 @@ def main():
         plt.show()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
