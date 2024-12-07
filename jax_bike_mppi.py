@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from tqdm import tqdm
 from track2obstacles import ConvexHull, smooth_track, generate_boundaries, add_obstacles
 import matplotlib.pyplot as plt
+from controllers.LinCovSteer import linCovSteer, getMatrices
 
 
 # define dynamics of bicycle model
@@ -27,6 +28,42 @@ def step(state, control):
     v += a * dt
 
     return jnp.array([x, y, theta, v])
+
+
+# define linearized dynamics of bicycle model
+def linearized_dyn(state0, control0):
+    # we linearize the dynamics around the given state and control
+    # state: [x, y, theta, v]
+    # control: [delta, a]
+
+    # parameters
+    L = 1.0  # length of vehicle
+    dt = 0.01  # time step
+
+    # state
+    x, y, theta, v = state0
+    delta, a = control0
+
+    # linearized dynamics
+    A = jnp.array(
+        [
+            [1.0, 0.0, -v * jnp.sin(theta) * dt, jnp.cos(theta) * dt],
+            [0.0, 1.0, v * jnp.cos(theta) * dt, jnp.sin(theta) * dt],
+            [0.0, 0.0, 1.0, jnp.tan(delta) / L * dt],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+
+    B = jnp.array(
+        [
+            [0.0, 0.0],
+            [0.0, 0.0],
+            [v / (jnp.cos(delta) ** 2 * L) * dt, 0.0],
+            [0.0, dt],
+        ]
+    )
+
+    return A, B
 
 
 def lax_wrapper_step(carry, action):
@@ -168,11 +205,15 @@ class MPPI(Controller):
         denom = np.sum(exp_costs) + 1e-10
 
         weighted_inputs = exp_costs[:, np.newaxis, np.newaxis] * acts
-        sol = np.sum(weighted_inputs, axis=0) / denom
+        self.sol = np.sum(weighted_inputs, axis=0) / denom
 
-        self.plan = np.roll(sol, shift=-1, axis=0)
-        self.plan[-1] = sol[-1]
-        return sol[0]
+        self.plan = np.roll(self.sol, shift=-1, axis=0)
+        self.plan[-1] = self.sol[-1]
+        return self.sol[0]
+
+    @property
+    def controls(self):
+        return self.sol
 
 
 if __name__ == "__main__":
@@ -239,60 +280,124 @@ if __name__ == "__main__":
     dir0 = waypoints[1] - waypoints[0]
     theta0 = jnp.arctan2(dir0[1], dir0[0])
     state = np.array([*smooth_points[0], theta0, 0.0])
-    states_history = jnp.array([state])
 
-    for _ in tqdm(range(config["N_SIMULATION"]), desc="Simulating"):
-        action = mppi.get_action(state)
-        state = step(state, action)
-        states_history = jnp.vstack([states_history, state])
+    mppi.get_action(state)
+    print(mppi.controls)
 
-        mppi._process_waypoints(state)
+    # for testing purposes we select a small horizon
+    # inside it given trajectory and controls
+    # we linearize the dynamics and compare
+    # how evolution of the state goes with the linearized dynamics
+    HORIZON_TEST = 10
 
-    print("Simulation done.")
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(
-        states_history[:, 0],
-        states_history[:, 1],
-        label="Trajectory",
-        color="blue",
-    )
-    ax.quiver(
-        states_history[:-1, 0],
-        states_history[:-1, 1],
-        jnp.cos(states_history[:-1, 2]),
-        jnp.sin(states_history[:-1, 2]),
-        scale=20,
-        width=0.003,
-        color="r",
-        label="Direction",
-    )
-    ax.plot(
-        smooth_points[:, 0],
-        smooth_points[:, 1],
-        color="black",
-        label="Central Line",
-        linewidth=2,
+    state0 = state.copy()
+
+    # perform rollout
+    uref = []
+    state = state0
+    nonlinear_rollout = [state]
+    for i in range(HORIZON_TEST):
+        state = step(state, mppi.controls[i])
+        nonlinear_rollout.append(state)
+        uref.append(mppi.controls[i])
+    nonlinear_rollout = jnp.array(nonlinear_rollout)
+    uref = jnp.array(uref)
+
+    print("Nonlinear rollout")
+    print(nonlinear_rollout[-1])
+
+    # linear rollout
+    linear_rollout = []
+    state = state0
+    Alist = []
+    Blist = []
+    for i in range(HORIZON_TEST):
+        A, B = linearized_dyn(nonlinear_rollout[i], mppi.controls[i])
+        Alist.append(A)
+        Blist.append(B)
+        state = A @ state + B @ mppi.controls[i]
+        linear_rollout.append(state)
+
+    linear_rollout = jnp.array(linear_rollout)
+    print("Linear rollout")
+    print(linear_rollout[-1])
+
+    d = np.zeros((4, 1))
+    W = np.eye(4) * 1e-4
+
+    dlist = [d] * HORIZON_TEST
+    Wlist = [W] * HORIZON_TEST
+
+    mu0 = np.zeros((4, 1))
+    Sigma0 = np.eye(4)
+
+    linCovSteer(
+        Alist,
+        Blist,
+        dlist,
+        Wlist,
+        mu0,
+        Sigma0,
+        Xref=np.expand_dims(nonlinear_rollout, axis=-1),
+        Uref=np.expand_dims(uref, axis=-1),
     )
 
-    discretization = 3  # simple const for obstacle density
-    add_obstacles(
-        left_boundary,
-        discretization,
-        mppi.cfg["obstacle_radius"],
-        ax,
-        color="gray",
-    )
-    add_obstacles(
-        right_boundary,
-        discretization,
-        mppi.cfg["obstacle_radius"],
-        ax,
-        color="gray",
-    )
 
-    ax.set_xlabel("X position")
-    ax.set_ylabel("Y position")
-    ax.set_title("Bicycle Model Trajectory")
-    ax.legend()
-    ax.grid()
-    plt.show()
+# if __name__ == "__main__":
+#     states_history = jnp.array([state])
+
+#     for _ in tqdm(range(config["N_SIMULATION"]), desc="Simulating"):
+#         action = mppi.get_action(state)
+#         state = step(state, action)
+#         states_history = jnp.vstack([states_history, state])
+
+#         mppi._process_waypoints(state)
+
+#     print("Simulation done.")
+#     fig, ax = plt.subplots(figsize=(10, 6))
+#     ax.plot(
+#         states_history[:, 0],
+#         states_history[:, 1],
+#         label="Trajectory",
+#         color="blue",
+#     )
+#     ax.quiver(
+#         states_history[:-1, 0],
+#         states_history[:-1, 1],
+#         jnp.cos(states_history[:-1, 2]),
+#         jnp.sin(states_history[:-1, 2]),
+#         scale=20,
+#         width=0.003,
+#         color="r",
+#         label="Direction",
+#     )
+#     ax.plot(
+#         smooth_points[:, 0],
+#         smooth_points[:, 1],
+#         color="black",
+#         label="Central Line",
+#         linewidth=2,
+#     )
+
+#     discretization = 3  # simple const for obstacle density
+#     add_obstacles(
+#         left_boundary,
+#         discretization,
+#         mppi.cfg["obstacle_radius"],
+#         ax,
+#         color="gray",
+#     )
+#     add_obstacles(
+#         right_boundary,
+#         discretization,
+#         mppi.cfg["obstacle_radius"],
+#         ax,
+#         color="gray",
+#     )
+
+#     ax.set_xlabel("X position")
+#     ax.set_ylabel("Y position")
+#     ax.set_title("Bicycle Model Trajectory")
+#     ax.legend()
+#     ax.grid()
+#     plt.show()
