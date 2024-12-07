@@ -3,7 +3,8 @@ import numpy as np
 import jax.numpy as jnp
 from abc import ABC, abstractmethod
 from tqdm import tqdm
-from track2obstacles import ConvexHull, smooth_track, generate_boundaries
+from track2obstacles import ConvexHull, smooth_track, generate_boundaries, add_obstacles
+import matplotlib.pyplot as plt
 
 
 # define dynamics of bicycle model
@@ -93,6 +94,22 @@ class MPPI(Controller):
         size = (self.cfg["n_samples"], self.cfg["horizon"], self.act_dim)
         return self.rng.normal(size=size) * self.cfg["noise_sigma"]
 
+    def _process_waypoints(self, state):
+        # check if we reached the waypoint
+        waypoint_idx = self.cfg["waypoint_idx"]
+        current_waypoint = self.cfg["waypoints"][waypoint_idx]
+        if (
+            jnp.linalg.norm(state[:2] - current_waypoint)
+            < self.cfg["accept_waypoint_dist"]
+        ):
+            waypoint_idx += 1
+            if waypoint_idx >= self.cfg["waypoints"].shape[0]:
+                waypoint_idx = 0
+            print(
+                f"Reached waypoint {waypoint_idx} next one is {self.cfg['waypoints'][waypoint_idx]}"
+            )
+            self.cfg["waypoint_idx"] = waypoint_idx
+
     def _compute_cost(self, state_sequences, action_sequences):
         # state_sequences: N x H x 4
         # action_sequences: N x H x 2
@@ -108,7 +125,6 @@ class MPPI(Controller):
         # discount cost if we reached the target
         discounted = jnp.where(reached, 0.0, distances)
         cost += jnp.sum(discounted, axis=1)
-
         # cost += jnp.sum(distances, axis=1)
 
         # we want to have direction aligned with the target, more important at the end
@@ -126,6 +142,17 @@ class MPPI(Controller):
         speed = jnp.mean(state_sequences[:, :, 3], axis=1)
         speed_cost = (speed - self.cfg["target_velocity"]) ** 2
         cost += speed_cost
+
+        # we want to avoid obstacles
+        # hard constraint on obstacles
+        obs_distances = jnp.linalg.norm(
+            state_sequences[:, :, :2][:, :, None, :] - self.cfg["obstacles"][None],
+            axis=-1,
+        )
+        # if we are inside an obstacle, cost is high
+        collision = jnp.any(obs_distances < self.cfg["obstacle_radius"], axis=-1)
+        collision_cost = jnp.sum(collision, axis=1) * 1e4
+        cost += collision_cost
 
         return cost
 
@@ -153,20 +180,23 @@ if __name__ == "__main__":
     config = {
         "horizon": 200,
         "n_samples": 512,
-        "noise_sigma": 2.0,
+        "noise_sigma": 3.0,
         "temperature": 1.0,
         "act_dim": 2,
         "act_max": np.array([1.4, 2.0]),
         "act_min": np.array([-1.4, -2.0]),
         "seed": 0,
         # simulation related
-        "N_SIMULATION": 4000,
+        "N_SIMULATION": 6000,
         # waypoints related
         # distance to waypoint to accept it
-        "accept_waypoint_dist": 0.3,
+        "accept_waypoint_dist": 0.2,
         "target_velocity": 4.0,
         "waypoints": None,
         "waypoint_idx": 0,
+        # obstacles parameters
+        "obstacle_radius": 0.15,
+        "obstacles": None,
     }
 
     # create random racing track
@@ -196,13 +226,13 @@ if __name__ == "__main__":
 
     # Step 3: Smooth the track
     smooth_points = smooth_track(hull_points)
-    # want to take each N point
-    smooth_points = smooth_points[::15]
-    # update config
+    # Add obstacles along boundaries
+    left_boundary, right_boundary = generate_boundaries(smooth_points, TRACK_WIDTH)
+    config["obstacles"] = jnp.vstack([left_boundary, right_boundary])
 
     # define a set of waypoints
-    waypoints = smooth_points
-    config["waypoints"] = smooth_points
+    waypoints = smooth_points[::15]
+    config["waypoints"] = waypoints
 
     mppi = MPPI(config)
     # find direction from first to second waypoint
@@ -216,27 +246,17 @@ if __name__ == "__main__":
         state = step(state, action)
         states_history = jnp.vstack([states_history, state])
 
-        # check if we reached the waypoint
-        waypoint_idx = mppi.cfg["waypoint_idx"]
-        current_waypoint = mppi.cfg["waypoints"][waypoint_idx]
-        if (
-            jnp.linalg.norm(state[:2] - current_waypoint)
-            < config["accept_waypoint_dist"]
-        ):
-            waypoint_idx += 1
-            if waypoint_idx >= waypoints.shape[0]:
-                waypoint_idx = 0
-            print(
-                f"Reached waypoint {waypoint_idx} next one is {waypoints[waypoint_idx]}"
-            )
-            mppi.cfg["waypoint_idx"] = waypoint_idx
-
-    import matplotlib.pyplot as plt
+        mppi._process_waypoints(state)
 
     print("Simulation done.")
-    plt.figure(figsize=(10, 6))
-    plt.plot(states_history[:, 0], states_history[:, 1], label="Trajectory")
-    plt.quiver(
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(
+        states_history[:, 0],
+        states_history[:, 1],
+        label="Trajectory",
+        color="blue",
+    )
+    ax.quiver(
         states_history[:-1, 0],
         states_history[:-1, 1],
         jnp.cos(states_history[:-1, 2]),
@@ -246,16 +266,33 @@ if __name__ == "__main__":
         color="r",
         label="Direction",
     )
-    plt.scatter(
+    ax.plot(
         smooth_points[:, 0],
         smooth_points[:, 1],
-        color="orange",
+        color="black",
         label="Central Line",
-        zorder=5,
+        linewidth=2,
     )
-    plt.xlabel("X position")
-    plt.ylabel("Y position")
-    plt.title("Bicycle Model Trajectory")
-    plt.legend()
-    plt.grid()
+
+    discretization = 3  # simple const for obstacle density
+    add_obstacles(
+        left_boundary,
+        discretization,
+        mppi.cfg["obstacle_radius"],
+        ax,
+        color="gray",
+    )
+    add_obstacles(
+        right_boundary,
+        discretization,
+        mppi.cfg["obstacle_radius"],
+        ax,
+        color="gray",
+    )
+
+    ax.set_xlabel("X position")
+    ax.set_ylabel("Y position")
+    ax.set_title("Bicycle Model Trajectory")
+    ax.legend()
+    ax.grid()
     plt.show()
