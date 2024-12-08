@@ -1,5 +1,6 @@
 # the file contains formulation of constrained covariance steering problem
 # and its solution using cvxpy
+from __future__ import annotations
 
 import numpy as np
 import cvxpy as cp
@@ -8,6 +9,7 @@ from scipy.stats import norm as stats_norm
 
 from scipy.linalg import block_diag
 import pdb
+
 
 
 def _phi(Alist, k2, k1):
