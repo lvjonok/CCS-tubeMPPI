@@ -2,27 +2,20 @@
 
 import numpy as np
 from costFunctions.costfun import LinBaselineCost, LinBaselineSoftCost
-from costFunctions.costfun import QuadHardCost, QuadSoftCost, QuadSoftCost2
-from costFunctions.costfun import QuadObsCost, QuadPosCost
 
-from sysDynamics.sysdyn import integratorDyn, car_dynamics
-from sysDynamics.sysdyn import rk4
+from sysDynamics.sysdyn import car_dynamics
 
-from controllers.MPPI import MPPI, MPPI_thread, MPPI_pathos
-from controllers.LinCovSteer import linCovSteer, getObsConstr, getTrackConstr
+from controllers.MPPI import MPPI_pathos
+from controllers.LinCovSteer import linCovSteer
 from controllers.LinCovSteer import getTrackConstrIn, getTrackConstrOut
-from controllers.LQG import LQG
 
 from Plotting.plotdata import plot_circle
-from Plotting.plotdata import plot_quad
 
 from matplotlib import pyplot as plt
 
-from pdb import set_trace
 from tqdm import tqdm
 import argparse
 import os
-from copy import deepcopy
 
 
 def main():
@@ -188,7 +181,7 @@ def main():
     Bk = dt * np.array([[0.0, 0.0], [0.0, 0.0], [0.0, 1.0], [1.0, 0.0]])
     dk = np.zeros((4, 1))
     Wk = np.eye(4) * dt
-    Wk[0:2,0:2] = np.zeros((2,2))
+    Wk[0:2, 0:2] = np.zeros((2, 2))
     # Wk[0:2, 0:2] = 0.001 * Wk[0:2, 0:2]
     Wk = Wk * ADD_NOISE
     nx, nu = Ak.shape[1], Bk.shape[1]

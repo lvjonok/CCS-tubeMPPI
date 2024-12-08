@@ -3,8 +3,6 @@
 import numpy as np
 from matplotlib import pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.collections import PatchCollection
-import pdb
 
 plt.rcParams["figure.autolayout"] = True
 
@@ -53,10 +51,8 @@ def plot_circle(X, R=2.0, h=0.125, help_points=[], X2=[]):
     return fig, ax
 
 
-import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
-import matplotlib.colors as mcolors
 
 
 def animate_circle(
