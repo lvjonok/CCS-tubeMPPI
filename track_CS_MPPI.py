@@ -2,27 +2,20 @@
 
 import numpy as np
 from costFunctions.costfun import LinBaselineCost, LinBaselineSoftCost
-from costFunctions.costfun import QuadHardCost, QuadSoftCost, QuadSoftCost2
-from costFunctions.costfun import QuadObsCost, QuadPosCost
 
-from sysDynamics.sysdyn import integratorDyn
-from sysDynamics.sysdyn import rk4
+from sysDynamics.sysdyn import car_dynamics
 
-from controllers.MPPI import MPPI, MPPI_thread, MPPI_pathos
-from controllers.LinCovSteer import linCovSteer, getObsConstr, getTrackConstr
+from controllers.MPPI import MPPI_pathos
+from controllers.LinCovSteer import linCovSteer
 from controllers.LinCovSteer import getTrackConstrIn, getTrackConstrOut
-from controllers.LQG import LQG
 
 from Plotting.plotdata import plot_circle
-from Plotting.plotdata import plot_quad
 
 from matplotlib import pyplot as plt
 
-from pdb import set_trace
 from tqdm import tqdm
 import argparse
 import os
-from copy import deepcopy
 
 
 def main():
@@ -157,12 +150,13 @@ def main():
     x0 = np.array([[2.0], [0.0], [0.0], [0.0]])
     theta_0 = 2 * np.pi * np.random.rand()
     x0[0:2] = 2 * np.array([[np.cos(theta_0)], [np.sin(theta_0)]])
+    x0[2] = theta_0 + np.pi / 2.0
 
     Sigma = mu * np.eye(2)
     Sigmainv = np.linalg.inv(Sigma)
     Ubar = np.ones((2, T))
 
-    F = lambda x, u: integratorDyn(x, u)
+    F = lambda x, u: car_dynamics(x, u)
 
     # print(COST_TYPE)
     if COST_TYPE == "hard":
@@ -178,17 +172,17 @@ def main():
     # Linear Double Integrator Dynamics and Noise Covariance:
     Ak = np.eye(4) + dt * np.array(
         [
+            [0.0, 0.0, 0.0, 1.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
             [0.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0],
         ]
     )
-    Bk = dt * np.array([[0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+    Bk = dt * np.array([[0.0, 0.0], [0.0, 0.0], [0.0, 1.0], [1.0, 0.0]])
     dk = np.zeros((4, 1))
     Wk = np.eye(4) * dt
-    # Wk[0:2,0:2] = np.zeros((2,2))
-    Wk[0:2, 0:2] = 0.001 * Wk[0:2, 0:2]
+    Wk[0:2, 0:2] = np.zeros((2, 2))
+    # Wk[0:2, 0:2] = 0.001 * Wk[0:2, 0:2]
     Wk = Wk * ADD_NOISE
     nx, nu = Ak.shape[1], Bk.shape[1]
 
@@ -211,7 +205,7 @@ def main():
     Xreal.append(x0)
     xk = x0
     xk_nom = xk
-    Sigmak = np.eye(4) * 0.001  # Initial Covariance is set to 0.
+    Sigmak = np.eye(4) * 0.0  # Initial Covariance is set to 0.
     total_cost = 0.0
     Unom, U = Ubar, Ubar
     plt.pause(1)

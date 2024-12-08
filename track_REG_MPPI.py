@@ -1,23 +1,15 @@
 # CSMPPI 2d quadrotor test script
 
 import numpy as np
-from costFunctions.costfun import LinBaselineCost, LinBaselineSoftCost
-from costFunctions.costfun import QuadHardCost, QuadSoftCost, QuadSoftCost2
-from costFunctions.costfun import QuadObsCost, QuadPosCost
 
-from sysDynamics.sysdyn import integratorDyn
-from sysDynamics.sysdyn import rk4
+from sysDynamics.sysdyn import car_dynamics
 
-from controllers.MPPI import MPPI, MPPI_thread, MPPI_pathos
-from controllers.LinCovSteer import linCovSteer
-from controllers.LQG import LQG
+from controllers.MPPI import MPPI_pathos
 
 from Plotting.plotdata import plot_circle
-from Plotting.plotdata import plot_quad
 
 from matplotlib import pyplot as plt
 
-from pdb import set_trace
 from tqdm import tqdm
 import argparse
 import os
@@ -152,49 +144,62 @@ def main():
             elif "Desired Speed" in line:
                 DES_SPEED = float(line.split(":")[1])
 
-    x0 = np.array([[2.0], [0.0], [0.0], [0.0]])
+    x0 = np.array([[2.0], [0.0], [0.0], [0.0], [0.0]])
     theta_0 = np.pi * np.random.rand() - np.pi / 2.0
     x0[0:2] = 2 * np.array([[np.cos(theta_0)], [np.sin(theta_0)]])
+    x0[2] = theta_0 + np.pi / 2.0
 
     Sigma = mu * np.eye(2)
     Sigmainv = np.linalg.inv(Sigma)
     Ubar = np.ones((2, T))
 
-    F = lambda x, u: integratorDyn(x, u)
+    F = lambda x, u: car_dynamics(x, u)
 
     # obs_list = np.load(OBS_FILE, allow_pickle=True)
 
     # print(COST_TYPE)
-    if COST_TYPE == "hard":
-        C = lambda x: Q_MULT * LinBaselineCost(x, vdes=DES_SPEED)
-        Phi = lambda x: 0.0
-    elif COST_TYPE == "soft":
-        C = lambda x: Q_MULT * LinBaselineSoftCost(x, vdes=DES_SPEED)
-        Phi = lambda x: 0.0
-    else:
-        print("Undefined Cost Function!!")
-        exit()
+    # if COST_TYPE == "hard":
+    #     C = lambda x: Q_MULT * LinBaselineCost(x, vdes=DES_SPEED)
+    #     Phi = lambda x: 0.0
+    # elif COST_TYPE == "soft":
+    #     C = lambda x: Q_MULT * LinBaselineSoftCost(x, vdes=DES_SPEED)
+    #     Phi = lambda x: 0.0
+    # else:
+    #     print("Undefined Cost Function!!")
+    #     exit()
 
-    Ak = np.eye(4) + dt * np.array(
-        [
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-            [0.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0],
-        ]
-    )
-    Bk = dt * np.array([[0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
-    dk = np.zeros((4, 1))
-    Wk = np.eye(4) * dt
+    def C(x):
+        # Define cost for bicycle model
+        px, py, heading, v, steering = x
+
+        vdes = 3.0
+        speedcost = (v - vdes) ** 2
+        d = np.sqrt(px**2 + py**2)
+        vx, vy = v * np.cos(heading), v * np.sin(heading)
+        angular_momentum = px * vy - py * vx
+        ang_moment_cost = abs(angular_momentum - 2 * vdes)
+        poscost = 0 if (2 - 0.125 <= d <= 2 + 0.125) else 1000
+
+        # want to keep steering angle small
+        steer_cost = steering**2
+
+        # want to keep velocity positive
+        if v < 0:
+            speedcost += 2000
+
+        return speedcost + poscost + ang_moment_cost + steer_cost
+
+    def Phi(x):
+        return 0.0
+
+    Wk = np.eye(5) * dt
     Wk[0:2, 0:2] = np.zeros((2, 2))
     Wk = Wk * ADD_NOISE
-    nx, nu = Ak.shape[1], Bk.shape[1]
 
     Xreal = []
     Ureal = []
     Xreal.append(x0)
     xk = x0
-    xk_nom = xk
     total_cost = 0.0
     Unom, U = Ubar, Ubar
     for i in tqdm(range(iteration), disable=False):
@@ -215,7 +220,7 @@ def main():
 
         eps = np.random.multivariate_normal(np.zeros(2), np.eye(2), (1,)).T * mu
 
-        wk = np.random.multivariate_normal(np.zeros(4), Wk, (1,)).T
+        wk = np.random.multivariate_normal(np.zeros(5), Wk, (1,)).T
 
         uk = U[:, 0:1]
         xkp1 = xk + F(xk, uk + eps) * dt + wk
@@ -246,6 +251,8 @@ def main():
 
     # figtraj, axtraj = plot_quad(X, obs_list, DES_POS)
     figtraj, axtraj = plot_circle(X)
+
+    # anim = animate_circle(X, interval=50, save_path="reg_mppi.gif")
 
     fig2, ax2 = plt.subplots()
     ax2.plot(Vvst)

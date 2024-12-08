@@ -16,7 +16,7 @@ def linCovSteer(
     # mu_des, Sigma_des,
     min_var_bound=5e0,
     prob_type="type-1",
-    solver="MOSEK",
+    solver="CLARABEL",
     Qlist=None,
     Rlist=None,
     Xref=None,
@@ -401,8 +401,11 @@ if __name__ == "__main__":
     G0, Gu, Gw, W, D, uffvar, Kvar, Lvar = getMatrices(Alist, Blist, dlist, Wlist)
 
     Xref = [np.array([[np.cos(k * 0.1)], [np.sin(k * 0.1)]]) for k in range(N + 1)]
+    print(len(Xref))
+    print(Xref[0].shape)
 
-    uff, L, K = linCovSteer(Alist, Blist, dlist, Wlist, mu0, Sigma0, Xref=Xref)
-    pdb.set_trace()
+    linCovSteer(Alist, Blist, dlist, Wlist, mu0, Sigma0, Xref=Xref)
+    # uff, L, K = 
+    # pdb.set_trace()
 
     pass

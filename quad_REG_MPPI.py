@@ -1,23 +1,17 @@
 # CSMPPI 2d quadrotor test script
 
 import numpy as np
-from costFunctions.costfun import LinBaselineCost, LinBaselineSoftCost
 from costFunctions.costfun import QuadHardCost, QuadSoftCost, QuadSoftCost2
 from costFunctions.costfun import QuadObsCost, QuadPosCost
 
-from sysDynamics.sysdyn import integratorDyn
-from sysDynamics.sysdyn import rk4
+from sysDynamics.sysdyn import car_dynamics
 
-from controllers.MPPI import MPPI, MPPI_thread, MPPI_pathos
-from controllers.LinCovSteer import linCovSteer
-from controllers.LQG import LQG
+from controllers.MPPI import MPPI_pathos
 
-from Plotting.plotdata import plot_circle
 from Plotting.plotdata import plot_quad
 
 from matplotlib import pyplot as plt
 
-from pdb import set_trace
 from tqdm import tqdm
 import argparse
 import os
@@ -103,7 +97,7 @@ def main():
     parser.add_argument(
         "-cost",
         type=str,
-        default="sep",
+        default="hard",
         choices=["sep", "hard", "soft", "soft2"],
         help="Cost Type. Default:sep, " + "options: sep, hard, soft, soft2",
     )
@@ -165,13 +159,13 @@ def main():
             elif "Cost Type" in line:
                 COST_TYPE = line.split(":")[1].replace(" ", "").replace("\n", "")
 
-    x0 = np.array([[0.0], [0.0], [0.0], [0.0]])
+    x0 = np.array([[0.0], [0.0], [0.0], [0.0], [0.0]])
 
     Sigma = mu * np.eye(2)
     Sigmainv = np.linalg.inv(Sigma)
     Ubar = np.ones((2, T))
 
-    F = lambda x, u: integratorDyn(x, u)
+    F = lambda x, u: car_dynamics(x, u)
 
     obs_list = np.load(OBS_FILE, allow_pickle=True)
 
@@ -192,20 +186,9 @@ def main():
         print("Undefined Cost Function!!")
         exit()
 
-    Ak = np.eye(4) + dt * np.array(
-        [
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-            [0.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0],
-        ]
-    )
-    Bk = dt * np.array([[0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
-    dk = np.zeros((4, 1))
-    Wk = np.eye(4) * dt
+    Wk = np.eye(5) * dt
     Wk[0:2, 0:2] = np.zeros((2, 2))
     Wk = Wk * ADD_NOISE
-    nx, nu = Ak.shape[1], Bk.shape[1]
 
     # Qk, Rk = 100*np.eye(nx), 0.001*np.eye(nu)
     # Qk[2:,2:] = 0.1*np.eye(2)
@@ -244,10 +227,12 @@ def main():
 
         eps = np.random.multivariate_normal(np.zeros(2), np.eye(2), (1,)).T * mu
 
-        wk = np.random.multivariate_normal(np.zeros(4), Wk, (1,)).T
+        wk = np.random.multivariate_normal(np.zeros(5), Wk, (1,)).T
 
         uk = U[:, 0:1]
         xkp1 = xk + F(xk, uk + eps) * dt + wk
+        # normalize theta
+        # xkp1[2] = (xkp1[2] + np.pi) % (2 * np.pi) - np.pi
 
         Xreal.append(xkp1)
         Ureal.append(uk)

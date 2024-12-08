@@ -1,23 +1,18 @@
 # CSMPPI 2d quadrotor test script
 
 import numpy as np
-from costFunctions.costfun import LinBaselineCost, LinBaselineSoftCost
 from costFunctions.costfun import QuadHardCost, QuadSoftCost, QuadSoftCost2
 from costFunctions.costfun import QuadObsCost, QuadPosCost
 
-from sysDynamics.sysdyn import integratorDyn
-from sysDynamics.sysdyn import rk4
+from sysDynamics.sysdyn import car_dynamics
 
-from controllers.MPPI import MPPI, MPPI_thread, MPPI_pathos
+from controllers.MPPI import MPPI_pathos
 from controllers.LinCovSteer import linCovSteer, getObsConstr
-from controllers.LQG import LQG
 
-from Plotting.plotdata import plot_circle
 from Plotting.plotdata import plot_quad
 
 from matplotlib import pyplot as plt
 
-from pdb import set_trace
 from tqdm import tqdm
 import argparse
 import os
@@ -165,13 +160,13 @@ def main():
             elif "Cost Type" in line:
                 COST_TYPE = line.split(":")[1].replace(" ", "").replace("\n", "")
 
-    x0 = np.array([[0.0], [0.0], [0.0], [0.0]])
+    x0 = np.array([[0.0], [0.0], [0.0], [0.0], [0.0]])
 
     Sigma = mu * np.eye(2)
     Sigmainv = np.linalg.inv(Sigma)
     Ubar = np.ones((2, T))
 
-    F = lambda x, u: integratorDyn(x, u)
+    F = lambda x, u: car_dynamics(x, u)
 
     obs_list = np.load(OBS_FILE, allow_pickle=True)
     # print(COST_TYPE)
@@ -195,13 +190,13 @@ def main():
     # Linear Double Integrator Dynamics and Noise Covariance:
     Ak = np.eye(4) + dt * np.array(
         [
+            [0.0, 0.0, 0.0, 1.0],
             [0.0, 0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0, 1.0],
             [0.0, 0.0, 0.0, 0.0],
-            [0.0, 0.0, 0.0, 0.0],
         ]
     )
-    Bk = dt * np.array([[0.0, 0.0], [0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+    Bk = dt * np.array([[0.0, 0.0], [0.0, 0.0], [0.0, 1.0], [1.0, 0.0]])
     dk = np.zeros((4, 1))
     Wk = np.eye(4) * dt
     Wk[0:2, 0:2] = np.zeros((2, 2))
@@ -266,7 +261,7 @@ def main():
             mu_0=xk_nom,
             Sigma_0=Sigmak,
             prob_type="type-1",
-            solver="ECOS",
+            solver="CLARABEL",
             Qlist=Qlist,
             Rlist=Rlist,
             Xref=Xnom_list[: T_CS + 1],
@@ -277,7 +272,7 @@ def main():
         if prob_status != "optimal":
             print("Optimization Problem is infeasible")
             print(xk)
-            set_trace()
+            # set_trace()
             break
 
         ubark, Kfbk = uff_[0:nu, :], L_[0:nu, :]
