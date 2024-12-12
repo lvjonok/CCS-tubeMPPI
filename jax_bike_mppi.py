@@ -148,7 +148,110 @@ class MPPI(Controller):
             )
             self.cfg["waypoint_idx"] = waypoint_idx
 
-    def _compute_cost(self, state_sequences, action_sequences):
+    def pure_pursuit_control(
+        self, state, waypoints, current_target_idx, k=0.1, L=1.0, Lfc=2.0
+    ):
+        rear_x = state[:, :, 0] - ((L / 2) * jnp.cos(state[:, :, 2]))
+        rear_y = state[:, :, 1] - ((L / 2) * jnp.sin(state[:, :, 2]))
+        alpha = (
+            jnp.arctan2(
+                waypoints[current_target_idx][1] - rear_y,
+                waypoints[current_target_idx][0] - rear_x,
+            )
+            - state[:, :, 2]
+        )
+        delta = jnp.arctan2(2 * L * jnp.sin(alpha) / (k * state[:, :, 3] + Lfc), 1.0)
+        return delta
+
+    def stanley_control(self, state, waypoints, current_target_idx, k=0.5, L=1.0):
+        def calc_target_index(state, cx, cy):
+            """
+            Compute index in the trajectory list of the target.
+
+            :param state: (State object)
+            :param cx: [float]
+            :param cy: [float]
+            :return: (int, float)
+            """
+            # Calc front axle position
+            fx = state[:, :, 0] + L * jnp.cos(state[:, :, 2])
+            fy = state[:, :, 1] + L * jnp.sin(state[:, :, 2])
+
+            # Search nearest point index
+            dx = jnp.array([fx - icx for icx in cx])
+            dy = jnp.array([fy - icy for icy in cy])
+            d = jnp.hypot(dx, dy)
+            target_idx = jnp.argmin(d, axis=0)
+
+            # Project RMS error onto front axle vector
+            front_axle_vec = jnp.stack(
+                [
+                    -jnp.cos(state[:, :, 2] + jnp.pi / 2),
+                    -jnp.sin(state[:, :, 2] + jnp.pi / 2),
+                ]
+            )
+
+            error_front_axles = []
+
+            for i in range(state.shape[0]):
+                for j in range(state.shape[1]):
+                    error_front_axles.append(
+                        (
+                            dx[target_idx[i, j]] * front_axle_vec[0]
+                            + dy[target_idx[i, j]] * front_axle_vec[1]
+                        ).mean()
+                    )
+
+            return target_idx, jnp.array(error_front_axles).reshape(
+                state.shape[0], state.shape[1]
+            )
+
+        def normalize_angle(x, zero_2_2pi=False, degree=False):
+            if isinstance(x, float):
+                is_float = True
+            else:
+                is_float = False
+
+            x = jnp.asarray(x).flatten()
+            if degree:
+                x = jnp.deg2rad(x)
+
+            if zero_2_2pi:
+                mod_angle = x % (2 * jnp.pi)
+            else:
+                mod_angle = (x + jnp.pi) % (2 * jnp.pi) - jnp.pi
+
+            if degree:
+                mod_angle = jnp.rad2deg(mod_angle)
+
+            if is_float:
+                return mod_angle.item()
+            else:
+                return mod_angle
+
+        _, error_front_axle = calc_target_index(state, waypoints[:, 0], waypoints[:, 1])
+
+        # theta_e corrects the heading error
+        theta_e = normalize_angle(
+            jnp.arctan2(
+                waypoints[current_target_idx][1], waypoints[current_target_idx][0]
+            )
+            - state[:, :, 2]
+        ).reshape(state.shape[:2])
+        # theta_d corrects the cross track error
+        theta_d = np.arctan2(k * error_front_axle, state[:, :, 3])
+        # Steering control
+        delta = theta_e + theta_d
+
+        return delta
+
+    def _compute_cost(
+        self,
+        state_sequences,
+        action_sequences,
+        weight_angle=1e2,
+        angle_control="none",
+    ):
         # state_sequences: N x H x 4
         # action_sequences: N x H x 2
         # target: 2
@@ -159,22 +262,55 @@ class MPPI(Controller):
 
         # cost is how close we are to the target during the trajectory
         distances = jnp.linalg.norm(state_sequences[:, :, :2] - closest_target, axis=-1)
+        # add cost only for the first point
         reached = distances < self.cfg["accept_waypoint_dist"]
         # discount cost if we reached the target
         discounted = jnp.where(reached, 0.0, distances)
         cost += jnp.sum(discounted, axis=1)
-        # cost += jnp.sum(distances, axis=1)
 
-        # # we want to have direction aligned with the target, more important at the end
-        # angles = jnp.arctan2(
-        #     closest_target[1] - state_sequences[:, :, 1],
-        #     closest_target[0] - state_sequences[:, :, 0],
-        # )
-        # angle_weights = jnp.geomspace(0.1, 1.0, state_sequences.shape[1])
-        # angle_cost = jnp.sum(
-        #     angle_weights * jnp.abs(angles - state_sequences[:, :, 2]), axis=1
-        # )
-        # cost += angle_cost
+        # # then we add the remaining distances, but geometrically decreasing
+        # not_reached = jnp.where(reached, 0.0, 1.0)
+        # geom = jnp.geomspace(1.0, 0.1, state_sequences.shape[1])
+        # cost += jnp.sum(not_reached * geom * distances, axis=1)
+
+        if angle_control == "stanley":
+            cost += (
+                0.5
+                * weight_angle
+                * self.stanley_control(
+                    state_sequences, self.cfg["waypoints"], current_target_idx
+                )[0].mean(axis=1)
+            )
+        elif angle_control == "pure_pursuit":
+            delta = self.pure_pursuit_control(
+                state_sequences, self.cfg["waypoints"], current_target_idx
+            )
+
+            cost += (
+                0.5
+                * weight_angle
+                * jnp.linalg.norm(delta - action_sequences[:, :, 0], axis=1)
+            )
+
+            # cost += (
+            #     0.5
+            #     * weight_angle
+            #     * self.pure_pursuit_control(
+            #         state_sequences, self.cfg["waypoints"], current_target_idx
+            #     ).mean(axis=1)
+            # )
+        else:
+            pass
+            # # we want to have direction aligned with the target, more important at the end
+            # angles = jnp.arctan2(
+            #     closest_target[1] - state_sequences[:, :, 1],
+            #     closest_target[0] - state_sequences[:, :, 0],
+            # )
+            # angle_weights = jnp.geomspace(0.1, 1.0, state_sequences.shape[1])
+            # angle_cost = jnp.sum(
+            #     angle_weights * jnp.abs(angles - state_sequences[:, :, 2]), axis=1
+            # )
+            # cost += angle_cost
 
         # we want to keep average speed positive and close to 3.0
         speed = jnp.mean(state_sequences[:, :, 3], axis=1)
@@ -183,14 +319,15 @@ class MPPI(Controller):
 
         # we want to avoid obstacles
         # hard constraint on obstacles
-        obs_distances = jnp.linalg.norm(
-            state_sequences[:, :, :2][:, :, None, :] - self.cfg["obstacles"][None],
-            axis=-1,
-        )
-        # if we are inside an obstacle, cost is high
-        collision = jnp.any(obs_distances < self.cfg["obstacle_radius"], axis=-1)
-        collision_cost = jnp.sum(collision, axis=1) * 1e4
-        cost += collision_cost
+        if self.cfg["enable_obstacles"]:
+            obs_distances = jnp.linalg.norm(
+                state_sequences[:, :, :2][:, :, None, :] - self.cfg["obstacles"][None],
+                axis=-1,
+            )
+            # if we are inside an obstacle, cost is high
+            collision = jnp.any(obs_distances < self.cfg["obstacle_radius"], axis=-1)
+            collision_cost = jnp.sum(collision, axis=1) * 1e4
+            cost += collision_cost
 
         return cost
 
@@ -200,7 +337,12 @@ class MPPI(Controller):
 
         trajectories = self.rollout_fn(obs, acts)
 
-        costs = self._compute_cost(trajectories, acts)
+        # print(self.cfg["angle_control"])
+        costs = self._compute_cost(
+            trajectories,
+            acts,
+            angle_control=self.cfg["angle_control"],
+        )
 
         exp_costs = np.exp(self.cfg["temperature"] * (np.min(costs) - costs))
         denom = np.sum(exp_costs) + 1e-10
@@ -277,10 +419,63 @@ def getObsConstr(Xlist, N, obstacles, max_obstacles: int):
 
 
 if __name__ == "__main__":
+    # parse the desired name of the sim data file
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Run MPPI controller on a racing track."
+    )
+    parser.add_argument(
+        "--sim_data",
+        type=str,
+        default="sim_data.npz",
+        help="Name of the simulation data file.",
+    )
+
+    args = parser.parse_args()
+
+    # predefine some racing tracks
+    racing_tracks = {
+        "track1": jnp.array(
+            [
+                [1.0, 1.0],
+                [2.0, 1.0],
+                [3.0, 2.0],
+                [4.0, 2.0],
+                [5.0, 3.0],
+                [6.0, 3.0],
+                [7.0, 4.0],
+                [6.0, 5.0],
+                [5.0, 5.0],
+                [4.0, 6.0],
+                [3.0, 6.0],
+                [2.0, 5.0],
+                [1.0, 5.0],
+                [1.0, 4.0],
+            ]
+        ),
+        "track2": jnp.array(
+            [
+                [0, 0],
+                [5.00, 0],
+                [5.00, 0.5],
+                [5.00, 1.5],
+                [5.00, 5.00],
+                [10.00, 10.00],
+                [9.00, 10.00],
+                [5.00, 10.00],
+                [15.00, 0],
+            ]
+        ),
+    }
+
     # test MPPI controller
     config = {
+        # track config
+        "track": "track2",
+        # MPPI config
         "horizon": 200,
-        "n_samples": 512,
+        "n_samples": 128,
         "noise_sigma": 3.0,
         "temperature": 1.0,
         "act_dim": 2,
@@ -288,17 +483,19 @@ if __name__ == "__main__":
         "act_min": np.array([-1.4, -2.0]),
         "seed": 0,
         # simulation related
-        "N_SIMULATION": 600,
+        "N_SIMULATION": 5000,
         # waypoints related
         # distance to waypoint to accept it
-        "accept_waypoint_dist": 0.2,
+        "accept_waypoint_dist": 0.3,
         "target_velocity": 4.0,
         "waypoints": None,
         "waypoint_idx": 0,
+        "waypoints_discretization": 25,
         # obstacles parameters
+        "enable_obstacles": True,
         "obstacle_radius": 0.15,
         "obstacles": None,
-        "obstacles_discretization": 3,
+        "obstacles_discretization": 2,
         # Constrained Covariance Steering
         "enable_ccs": False,
         "T_CS": 4,  # number of time steps for CCS to look ahead
@@ -311,28 +508,14 @@ if __name__ == "__main__":
         # and the covariance is set to 0
         "sigma_threshold": 1.0,
         "max_obstacles": 0,
+        # Choose between 'stanley' and 'pure_pursuit'
+        "angle_control": "none",  # 'pure_pursuit'
+        "sim_data": args.sim_data,
     }
 
     # create random racing track
     TRACK_WIDTH = 0.60
-    points = jnp.array(
-        [
-            [1.0, 1.0],
-            [2.0, 1.0],
-            [3.0, 2.0],
-            [4.0, 2.0],
-            [5.0, 3.0],
-            [6.0, 3.0],
-            [7.0, 4.0],
-            [6.0, 5.0],
-            [5.0, 5.0],
-            [4.0, 6.0],
-            [3.0, 6.0],
-            [2.0, 5.0],
-            [1.0, 5.0],
-            [1.0, 4.0],
-        ]
-    )
+    points = racing_tracks[config["track"]]
 
     # Step 2: Compute the convex hull
     hull = ConvexHull(points)
@@ -345,10 +528,11 @@ if __name__ == "__main__":
     # take only each 5th point to reduce obstacle density
     left_boundary = left_boundary[:: config["obstacles_discretization"]]
     right_boundary = right_boundary[:: config["obstacles_discretization"]]
-    config["obstacles"] = jnp.vstack([left_boundary, right_boundary])
+    if config["enable_obstacles"]:
+        config["obstacles"] = jnp.vstack([left_boundary, right_boundary])
 
     # define a set of waypoints
-    waypoints = smooth_points[::15]
+    waypoints = smooth_points[:: config["waypoints_discretization"]]
     config["waypoints"] = waypoints
 
     mppi = MPPI(config)
@@ -378,11 +562,13 @@ if __name__ == "__main__":
     Wk[:2, :2] = 0.0
 
     states_history = jnp.array([state])
+    control_history = jnp.array([mppi.get_action(state_nominal)])
     states_nominal_history = jnp.array([state_nominal])
 
     for _ in tqdm(range(config["N_SIMULATION"]), desc="Simulating"):
         # run mppi for the nominal state
         action = mppi.get_action(state_nominal)
+        control_history = jnp.vstack([control_history, action])
 
         # part about CCS
         if config["enable_ccs"]:
@@ -470,7 +656,27 @@ if __name__ == "__main__":
             SigmaK = np.eye(4) * 0
 
     print("Simulation done.")
+
+    # save the trajectory and all the data
+    sim_data = {
+        "config": mppi.cfg,
+        "states_history": states_history,
+        "control_history": control_history,
+    }
+    np.savez(config["sim_data"], **sim_data)
+
     fig, ax = plt.subplots(figsize=(10, 6))
+    # equal aspect ratio
+    ax.set_aspect("equal")
+    # add waypoints as small circles
+    ax.scatter(
+        waypoints[:, 0],
+        waypoints[:, 1],
+        color="red",
+        label="Waypoints",
+        s=100,
+        zorder=10,
+    )
     ax.plot(
         smooth_points[:, 0],
         smooth_points[:, 1],
@@ -487,20 +693,21 @@ if __name__ == "__main__":
         color="blue",
     )
 
-    add_obstacles(
-        left_boundary,
-        config["obstacles_discretization"],
-        mppi.cfg["obstacle_radius"],
-        ax,
-        color="gray",
-    )
-    add_obstacles(
-        right_boundary,
-        config["obstacles_discretization"],
-        mppi.cfg["obstacle_radius"],
-        ax,
-        color="gray",
-    )
+    if config["enable_obstacles"]:
+        add_obstacles(
+            left_boundary,
+            config["obstacles_discretization"],
+            mppi.cfg["obstacle_radius"],
+            ax,
+            color="gray",
+        )
+        add_obstacles(
+            right_boundary,
+            config["obstacles_discretization"],
+            mppi.cfg["obstacle_radius"],
+            ax,
+            color="gray",
+        )
 
     ax.set_xlabel("X position")
     ax.set_ylabel("Y position")

@@ -78,6 +78,8 @@ def QuadHardCost(xk, dt, pdes, obstacles=[]):
         else:
             pass
 
+    obscost = 0
+
     return poscost + obscost
 
 
@@ -90,7 +92,8 @@ def QuadSoftCost(xk, dt, pdes, obstacles=[]):
     The difference of QuadSoftCost from the QuadObsCost is that the cost func-
     tion does not have indicator functions.
     """
-    px, py, vx, vy = xk[0, 0], xk[1, 0], xk[2, 0], xk[3, 0]
+    # px, py, vx, vy = xk[0, 0], xk[1, 0], xk[2, 0], xk[3, 0]
+    px, py, vx, vy = xk[0], xk[1], xk[2], xk[3]
     pxdes, pydes = pdes[0], pdes[1]
     p_vec = np.array([[px], [py]])
 
@@ -103,7 +106,7 @@ def QuadSoftCost(xk, dt, pdes, obstacles=[]):
         diff_obs = np.sqrt(diff_obs)
         obscost += np.exp(-(1 / 2) * (1 / R_obs**2) * diff_obs**2)
 
-    obscost *= 2000.0
+    obscost *= 100.0
 
     return poscost + obscost
 

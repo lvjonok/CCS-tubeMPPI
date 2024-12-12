@@ -62,20 +62,31 @@ def create_track(discretization=20, circle_radius=10):
     # points = random_points()
     points = np.array(
         [
-            [100, 100],
-            [200, 100],
-            [300, 200],
-            [400, 200],
-            [500, 300],
-            [600, 300],
-            [700, 400],
-            [600, 500],
+            [400, 300],
+            [450, 300],
+            [480, 340],
+            [480, 380],
+            [450, 420],
+            [400, 440],
+            [350, 420],
+            [320, 380],
+            [320, 340],
+            [350, 300],
+            [400, 280],
+        ]
+    )
+
+    points = np.array(
+        [
+            [0, 0],
+            [500, 0],
+            [500, 5],
+            [500, 15],
             [500, 500],
-            [400, 600],
-            [300, 600],
-            [200, 500],
-            [100, 500],
-            [100, 400],
+            [1000, 1000],
+            [900, 1000],
+            [500, 1000],
+            [1500, 0],
         ]
     )
 
@@ -85,7 +96,6 @@ def create_track(discretization=20, circle_radius=10):
 
     # Step 3: Smooth the track
     smooth_points = smooth_track(hull_points)
-
     # Step 4: Generate track boundaries
     left_boundary, right_boundary = generate_boundaries(smooth_points, TRACK_WIDTH)
 

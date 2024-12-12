@@ -119,7 +119,7 @@ def linCovSteer(
         # 			  cp.norm(Rsigma0.T @ Lvar.T, "fro")**2
         # 			  <= min_var_bound)
         prob = cp.Problem(obj, constr)
-        prob.solve(solver=solver, verbose=False)
+        prob.solve(solver=solver, verbose=True)
 
     elif prob_type == "type-2":
         obj_func = cp.norm(zetaK, "fro") ** 2
@@ -306,6 +306,7 @@ def getObsConstr(Xlist, N, obstacles):
             atildek = Fpos_k.T @ a_k
             btildek = b_k
             constrData.append((atildek, btildek))
+            print(atildek.shape, btildek.shape)
 
     return constrData, help_points
 
@@ -405,7 +406,7 @@ if __name__ == "__main__":
     print(Xref[0].shape)
 
     linCovSteer(Alist, Blist, dlist, Wlist, mu0, Sigma0, Xref=Xref)
-    # uff, L, K = 
+    # uff, L, K =
     # pdb.set_trace()
 
     pass

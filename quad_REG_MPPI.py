@@ -16,6 +16,8 @@ from tqdm import tqdm
 import argparse
 import os
 
+from track2obstacles import ConvexHull, smooth_track, generate_boundaries
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -168,20 +170,64 @@ def main():
     F = lambda x, u: car_dynamics(x, u)
 
     obs_list = np.load(OBS_FILE, allow_pickle=True)
+    print(obs_list)
+
+    # WE GENERATE CUSTOM TRACK
+    TRACK_WIDTH = 0.60
+    points = np.array(
+        [
+            [1, 1],
+            [2, 1],
+            [3, 2],
+            [4, 2],
+            [5, 3],
+            [6, 3],
+            [7, 4],
+            [6, 5],
+            [5, 5],
+            [4, 6],
+            [3, 6],
+            [2, 5],
+            [1, 5],
+            [1, 4],
+        ]
+    )
+
+    # Step 2: Compute the convex hull
+    hull = ConvexHull(points)
+    hull_points = points[hull.vertices]
+
+    # Step 3: Smooth the track
+    smooth_points = smooth_track(hull_points)
+
+    # Step 4: Generate track boundaries
+    left_boundary, right_boundary = generate_boundaries(smooth_points, TRACK_WIDTH)
+    circle_radius = 0.25
+
+    obs_list = []
+    for i in range(len(left_boundary)):
+        obs_list.append([(left_boundary[i, 0], left_boundary[i, 1]), circle_radius])
+
+    for i in range(len(right_boundary)):
+        obs_list.append([(right_boundary[i, 0], right_boundary[i, 1]), circle_radius])
+
+    x0 = np.array([[1], [1], [0.0], [0.0], [0.0]])
+    DES_POS = (1.3, 1)
+    # exit(0)
 
     print(COST_TYPE)
-    if COST_TYPE == "sep":
-        C = lambda x: Q_MULT * QuadObsCost(x, dt, obstacles=obs_list)
-        Phi = lambda x: Q_MULT * T * QuadPosCost(x, dt, pdes=DES_POS)
-    elif COST_TYPE == "hard":
+    # if COST_TYPE == "sep":
+    #     # C = lambda x: Q_MULT * QuadObsCost(x, dt, obstacles=obs_list)
+    #     # Phi = lambda x: Q_MULT * T * QuadPosCost(x, dt, pdes=DES_POS)
+    if COST_TYPE == "hard":
         C = lambda x: Q_MULT * QuadHardCost(x, dt, pdes=DES_POS, obstacles=obs_list)
         Phi = lambda x: 0.0
-    elif COST_TYPE == "soft":
-        C = lambda x: Q_MULT * QuadSoftCost(x, dt, pdes=DES_POS, obstacles=obs_list)
-        Phi = lambda x: 0.0
-    elif COST_TYPE == "soft2":
-        C = lambda x: Q_MULT * QuadSoftCost2(x, dt, pdes=DES_POS, obstacles=obs_list)
-        Phi = lambda x: 0.0
+    # elif COST_TYPE == "soft":
+    #     C = lambda x: Q_MULT * QuadSoftCost(x, dt, pdes=DES_POS, obstacles=obs_list)
+    #     Phi = lambda x: 0.0
+    # elif COST_TYPE == "soft2":
+    #     C = lambda x: Q_MULT * QuadSoftCost2(x, dt, pdes=DES_POS, obstacles=obs_list)
+    #     Phi = lambda x: 0.0
     else:
         print("Undefined Cost Function!!")
         exit()
@@ -243,6 +289,11 @@ def main():
         Udummy[:, 0:-1] = U[:, 1:]
         Udummy[:, -1:] = U[:, -2:-1]
         U = Udummy
+
+        # if velocity is negative, then we just temporarily stop
+        if xk[3] < 0:
+            print("violate positive velocity")
+            break
 
         Rkp1 = np.linalg.norm(xkp1[0:2], 2)
         total_cost += (C(xk) + (lambda_ / 2.0) * (uk.T @ Sigmainv @ uk)) * dt
